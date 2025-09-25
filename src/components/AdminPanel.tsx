@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Users, Activity, Settings, Plus, Trash2, Eye, Ban, VolumeX, Server, Lock, TriangleAlert as AlertTriangle, CircleCheck as CheckCircle, Circle as XCircle, Play, Pause, Monitor, Database, Wifi, Globe, Key, Crown, Zap, ChartBar as BarChart3, Radio, Layers, Terminal, FileVideo, Link, Save, X } from 'lucide-react';
+import { Shield, Users, Activity, Settings, Plus, Trash2, Eye, Ban, VolumeX, Server, Lock, TriangleAlert as AlertTriangle, CircleCheck as CheckCircle, Circle as XCircle, Play, Pause, Monitor, Database, Wifi, Globe, Key, Crown, Zap, ChartBar as BarChart3, Radio, Layers, Terminal, FileVideo, Link, Save, X, MessageCircle } from 'lucide-react';
 import { ConnectedUser, ChatMessage, StreamSource, SecurityLog } from '../types';
 import ChatSystem from './ChatSystem';
 import { formatTime, generateSecureId, validateM3U8Url, sanitizeInput } from '../utils';

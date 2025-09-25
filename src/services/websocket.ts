@@ -43,6 +43,13 @@ export class WebSocketService {
       }
       
       console.log('Attempting to connect to WebSocket:', wsUrl);
+      
+      // Vérifier si une connexion existe déjà
+      if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+        console.log('WebSocket connection already exists, skipping...');
+        return;
+      }
+      
       this.ws = new WebSocket(wsUrl);
       
       this.ws.onopen = () => {
@@ -55,6 +62,9 @@ export class WebSocketService {
           clearTimeout(this.reconnectTimeout);
           this.reconnectTimeout = null;
         }
+        
+        // Envoyer un ping pour maintenir la connexion
+        this.sendPing();
       };
 
       this.ws.onmessage = (event) => {
@@ -88,11 +98,26 @@ export class WebSocketService {
           url: this.ws?.url,
           timestamp: new Date().toISOString()
         });
+        
+        // Fermer la connexion en cas d'erreur pour forcer une reconnexion
+        if (this.ws) {
+          this.ws.close();
+        }
       };
     } catch (error) {
       console.error('Error creating WebSocket connection:', error);
       if (this.shouldReconnect && !this.isReconnecting) {
         this.reconnect();
+      }
+    }
+  }
+  
+  private sendPing() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'ping' }));
+      } catch (error) {
+        console.error('Error sending ping:', error);
       }
     }
   }
@@ -115,6 +140,11 @@ export class WebSocketService {
     
     this.reconnectTimeout = setTimeout(() => {
       this.isReconnecting = false;
+      // Nettoyer l'ancienne connexion avant de reconnecter
+      if (this.ws) {
+        this.ws.close();
+        this.ws = null;
+      }
       this.connect();
     }, delay);
   }

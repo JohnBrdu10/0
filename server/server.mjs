@@ -75,11 +75,13 @@ function parseUserAgent(userAgent) {
 function broadcastToAll(message) {
   const messageStr = JSON.stringify(message);
   connectedClients.forEach((client) => {
-    if (client.ws.readyState === 1) { // WebSocket.OPEN
+    if (client.ws && client.ws.readyState === WebSocket.OPEN) {
       try {
         client.ws.send(messageStr);
       } catch (error) {
         console.error('Error broadcasting to client:', error);
+        // Nettoyer les connexions fermées
+        connectedClients.delete(client.id);
       }
     }
   });
@@ -92,11 +94,28 @@ function broadcastToStream(streamKey, message) {
   const messageStr = JSON.stringify(message);
   viewers.forEach(clientId => {
     const client = connectedClients.get(clientId);
-    if (client && client.ws.readyState === 1) {
+    if (client && client.ws && client.ws.readyState === WebSocket.OPEN) {
       try {
         client.ws.send(messageStr);
       } catch (error) {
         console.error('Error broadcasting to stream viewer:', error);
+        // Nettoyer les connexions fermées
+        viewers.delete(clientId);
+      }
+    }
+  });
+}
+
+function broadcastToGlobalChat(message) {
+  const messageStr = JSON.stringify(message);
+  globalConnectedUsers.forEach(clientId => {
+    const client = connectedClients.get(clientId);
+    if (client && client.ws && client.ws.readyState === WebSocket.OPEN) {
+      try {
+        client.ws.send(messageStr);
+      } catch (error) {
+        console.error('Error broadcasting to global chat:', error);
+        globalConnectedUsers.delete(clientId);
       }
     }
   });
@@ -139,16 +158,18 @@ wss.on('connection', async (ws, req) => {
     const banInfo = await db.isUserBanned(fingerprint, ip);
     if (banInfo) {
       console.log(`[WebSocket] Utilisateur banni tenté de se connecter: ${ip}`);
-      ws.send(JSON.stringify({
-        type: 'banned',
-        message: 'Vous êtes banni de cette plateforme.',
-        banInfo: {
-          reason: banInfo.reason,
-          bannedAt: banInfo.banned_at,
-          permanent: banInfo.is_permanent
-        }
-      }));
-      ws.close();
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'banned',
+          message: 'Vous êtes banni de cette plateforme.',
+          banInfo: {
+            reason: banInfo.reason,
+            bannedAt: banInfo.banned_at,
+            permanent: banInfo.is_permanent
+          }
+        }));
+        setTimeout(() => ws.close(), 1000);
+      }
       return;
     }
   } catch (error) {
@@ -216,6 +237,13 @@ wss.on('connection', async (ws, req) => {
       console.log(`[WebSocket] Message reçu de ${clientId}:`, message.type);
       
       switch (message.type) {
+        case 'ping':
+          // Répondre au ping pour maintenir la connexion
+          if (client.ws && client.ws.readyState === WebSocket.OPEN) {
+            client.ws.send(JSON.stringify({ type: 'pong' }));
+          }
+          break;
+          
         case 'user_info':
           client.username = message.username;
           client.page = message.page;
@@ -797,6 +825,9 @@ wss.on('connection', async (ws, req) => {
         }
       }
       
+      // Retirer du chat global
+      globalConnectedUsers.delete(clientId);
+      
       // Supprimer de la base de données
       try {
         await db.removeConnectedUser(clientId);
@@ -819,6 +850,11 @@ wss.on('connection', async (ws, req) => {
     }
     
     connectedClients.delete(clientId);
+    
+    // Nettoyer les connexions fermées de tous les streams
+    streamViewers.forEach((viewers, streamKey) => {
+      viewers.delete(clientId);
+    });
     
     // Diffuser le nouveau nombre d'utilisateurs
     broadcastToAll({
@@ -845,8 +881,44 @@ wss.on('connection', async (ws, req) => {
   
   ws.on('error', (error) => {
     console.error(`[WebSocket] Erreur pour ${clientId}:`, error);
+    // Nettoyer la connexion en cas d'erreur
+    if (connectedClients.has(clientId)) {
+      connectedClients.delete(clientId);
+      globalConnectedUsers.delete(clientId);
+      streamViewers.forEach((viewers) => {
+        viewers.delete(clientId);
+      });
+    }
   });
 });
+
+// Nettoyage périodique des connexions fermées
+setInterval(() => {
+  const closedConnections = [];
+  
+  connectedClients.forEach((client, clientId) => {
+    if (!client.ws || client.ws.readyState === WebSocket.CLOSED || client.ws.readyState === WebSocket.CLOSING) {
+      closedConnections.push(clientId);
+    }
+  });
+  
+  closedConnections.forEach(clientId => {
+    console.log(`[Cleanup] Suppression de la connexion fermée: ${clientId}`);
+    connectedClients.delete(clientId);
+    globalConnectedUsers.delete(clientId);
+    streamViewers.forEach((viewers) => {
+      viewers.delete(clientId);
+    });
+  });
+  
+  if (closedConnections.length > 0) {
+    // Diffuser le nouveau nombre d'utilisateurs
+    broadcastToAll({
+      type: 'user_count',
+      count: connectedClients.size
+    });
+  }
+}, 30000); // Toutes les 30 secondes
 
 // API REST pour la détection de streams et autres endpoints
 server.on('request', (req, res) => {
