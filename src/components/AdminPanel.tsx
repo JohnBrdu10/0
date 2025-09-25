@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Users, Activity, Settings, Plus, Trash2, Eye, Ban, VolumeX, Server, Lock, TriangleAlert as AlertTriangle, CircleCheck as CheckCircle, Circle as XCircle, Play, Pause, Monitor, Database, Wifi, Globe, Key, Crown, Zap, ChartBar as BarChart3, Radio, Layers, Terminal, FileVideo, Link, Save, X } from 'lucide-react';
 import { ConnectedUser, ChatMessage, StreamSource, SecurityLog } from '../types';
+import ChatSystem from './ChatSystem';
 import { formatTime, generateSecureId, validateM3U8Url, sanitizeInput } from '../utils';
 
 interface AdminPanelProps {
@@ -24,6 +25,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newSourceUrl, setNewSourceUrl] = useState('');
   const [newSourceName, setNewSourceName] = useState('');
   const [securityLogs, setSecurityLogs] = useState<SecurityLog[]>([]);
+  const [adminChatContext, setAdminChatContext] = useState<'global' | string>('global');
+  const [availableStreams, setAvailableStreams] = useState<any[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [systemStats, setSystemStats] = useState({
     uptime: 0,
@@ -31,6 +34,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     activeStreams: 0,
     securityAlerts: 0
   });
+
+  // Écouter les mises à jour des streams
+  useEffect(() => {
+    if (wsService) {
+      const originalCallback = wsService.onMessageCallback;
+      wsService.onMessageCallback = (data) => {
+        if (originalCallback) originalCallback(data);
+        
+        if (data.type === 'available_streams') {
+          setAvailableStreams(data.streams || []);
+        }
+      };
+      
+      return () => {
+        wsService.onMessageCallback = originalCallback;
+      };
+    }
+  }, [wsService]);
 
   useEffect(() => {
     // Charger les sources de stream depuis localStorage
@@ -65,6 +86,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     return () => clearInterval(interval);
   }, [connectedUsers.length, streamSources, securityLogs, onStreamSourceChange]);
 
+  // Fonctions de gestion des streams
+  const activateStream = (sourceId: string) => {
+    const source = streamSources.find(s => s.id === sourceId);
+    if (source && wsService) {
+      wsService.ws?.send(JSON.stringify({
+        type: 'activate_stream',
+        streamSource: source
+      }));
+      toggleStreamSource(sourceId);
+    }
+  };
+
   const addStreamSource = () => {
     if (!newSourceUrl.trim() || !newSourceName.trim()) {
       alert('Veuillez remplir tous les champs');
@@ -98,6 +131,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     addSecurityLog('STREAM_SOURCE_ADDED', `Nouvelle source ajoutée: ${newSource.name}`, 'medium');
   };
 
+  const uploadM3U8File = async (streamKey: string, file: File) => {
+    const content = await file.text();
+    
+    // Envoyer au serveur média
+    const response = await fetch('http://localhost:8000/api/upload-m3u8', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ streamKey, content })
+    });
+    
+    return response.json();
+  };
+
   const toggleStreamSource = (sourceId: string) => {
     const updatedSources = streamSources.map(source => ({
       ...source,
@@ -110,6 +156,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     const newActiveSource = updatedSources.find(s => s.isActive) || null;
     setActiveSource(newActiveSource);
     onStreamSourceChange(newActiveSource);
+    
+    // Notifier le serveur WebSocket
+    if (wsService && newActiveSource) {
+      wsService.ws?.send(JSON.stringify({
+        type: 'stream_activated',
+        stream: newActiveSource
+      }));
+    }
 
     addSecurityLog('STREAM_STATUS_CHANGED', `Source ${newActiveSource ? 'activée' : 'désactivée'}`, 'low');
   };
@@ -131,6 +185,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     addSecurityLog('STREAM_SOURCE_DELETED', `Source supprimée: ${sourceToDelete?.name}`, 'medium');
   };
 
+  const handleFileUpload = async (sourceId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !file.name.endsWith('.m3u8')) {
+      alert('Veuillez sélectionner un fichier M3U8 valide');
+      return;
+    }
+    
+    const result = await uploadM3U8File(sourceId, file);
+    if (result.success) {
+      alert('Fichier M3U8 uploadé avec succès !');
+    }
+  };
+
   const addSecurityLog = (action: string, details: string, severity: 'low' | 'medium' | 'high' | 'critical') => {
     const newLog: SecurityLog = {
       id: generateSecureId(),
@@ -146,6 +213,58 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setSecurityLogs(updatedLogs);
     localStorage.setItem('securityLogs', JSON.stringify(updatedLogs));
   };
+
+  const renderChatManagement = () => (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="lg:col-span-2">
+        <div className="h-[600px]">
+          <ChatSystem
+            currentUser={currentUser}
+            wsService={wsService}
+            currentContext={adminChatContext}
+            contextName={adminChatContext === 'global' ? undefined : availableStreams.find(s => s.key === adminChatContext)?.name}
+            isAdmin={true}
+            isModerator={true}
+          />
+        </div>
+      </div>
+      <div className="lg:col-span-1">
+        <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6">
+          <h3 className="text-xl font-bold text-white mb-4">Contextes de Chat</h3>
+          <div className="space-y-3">
+            <button
+              onClick={() => setAdminChatContext('global')}
+              className={`w-full p-3 rounded-xl text-left transition-all ${
+                adminChatContext === 'global'
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white'
+                  : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50'
+              }`}
+            >
+              <Globe className="h-4 w-4 inline mr-2" />
+              Chat Global
+            </button>
+            {availableStreams.map((stream) => (
+              <button
+                key={stream.key}
+                onClick={() => setAdminChatContext(stream.key)}
+                className={`w-full p-3 rounded-xl text-left transition-all ${
+                  adminChatContext === stream.key
+                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                    : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50'
+                }`}
+              >
+                <Radio className="h-4 w-4 inline mr-2" />
+                {stream.name}
+                <span className="text-xs opacity-75 block">
+                  {stream.viewers || 0} viewer{(stream.viewers || 0) > 1 ? 's' : ''}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   const renderDashboard = () => (
     <div className="space-y-8">
@@ -345,6 +464,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       <div className="grid grid-cols-1 gap-6">
         {streamSources.map((source) => (
           <div key={source.id} className="bg-slate-900/50 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-6 hover:scale-[1.02] transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+              <input
+                type="file"
+                accept=".m3u8"
+                onChange={(e) => handleFileUpload(source.id, e)}
+                className="hidden"
+                id={`file-${source.id}`}
+              />
+              <label
+                htmlFor={`file-${source.id}`}
+                className="px-4 py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30 rounded-xl cursor-pointer transition-all flex items-center space-x-2"
+              >
+                <FileVideo className="h-4 w-4" />
+                <span>Upload M3U8</span>
+              </label>
+            </div>
             <div className="flex items-center justify-between">
               <div className="flex-1">
                 <div className="flex items-center space-x-4 mb-3">
@@ -376,7 +511,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
               <div className="flex items-center space-x-3 ml-6">
                 <button
-                  onClick={() => toggleStreamSource(source.id)}
+                  onClick={() => activateStream(source.id)}
                   className={`px-6 py-3 rounded-xl font-semibold transition-all transform hover:scale-105 flex items-center space-x-2 ${
                     source.isActive 
                       ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30' 
@@ -463,7 +598,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const tabs = [
     { id: 'dashboard', label: 'Tableau de bord', icon: BarChart3 },
+    { id: 'chat', label: 'Gestion Chat', icon: MessageCircle },
     { id: 'streams', label: 'Sources Stream', icon: Radio },
+    { id: 'users', label: 'Utilisateurs', icon: Users },
     { id: 'security', label: 'Sécurité', icon: Shield },
     { id: 'settings', label: 'Paramètres', icon: Settings }
   ];
@@ -511,7 +648,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         {/* Contenu */}
         <div className="animate-in fade-in-0 duration-500">
           {activeTab === 'dashboard' && renderDashboard()}
+          {activeTab === 'chat' && renderChatManagement()}
           {activeTab === 'streams' && renderStreams()}
+          {activeTab === 'users' && renderUsers()}
           {activeTab === 'security' && renderSecurity()}
           {activeTab === 'settings' && (
             <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700/50 rounded-3xl p-8">
@@ -526,6 +665,55 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+
+  const renderUsers = () => (
+    <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700/50 rounded-3xl p-8">
+      <h3 className="text-2xl font-bold text-white mb-8 flex items-center">
+        <Users className="h-7 w-7 mr-3 text-blue-400" />
+        Gestion des Utilisateurs
+      </h3>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-slate-700">
+              <th className="text-left text-slate-400 py-3">Utilisateur</th>
+              <th className="text-left text-slate-400 py-3">IP</th>
+              <th className="text-left text-slate-400 py-3">Page</th>
+              <th className="text-left text-slate-400 py-3">Connecté depuis</th>
+              <th className="text-left text-slate-400 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {connectedUsers.map((user) => (
+              <tr key={user.id} className="border-b border-slate-800 hover:bg-slate-800/30">
+                <td className="py-4">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                    <span className="text-white font-medium">{user.username}</span>
+                  </div>
+                </td>
+                <td className="py-4 text-slate-300 font-mono text-sm">{user.ip}</td>
+                <td className="py-4 text-slate-300">{user.page}</td>
+                <td className="py-4 text-slate-400 text-sm">
+                  {Math.floor((Date.now() - user.connectTime.getTime()) / 60000)} min
+                </td>
+                <td className="py-4">
+                  <div className="flex items-center space-x-2">
+                    <button className="text-orange-400 hover:text-orange-300 p-2 rounded-lg hover:bg-orange-500/10 transition-all">
+                      <VolumeX className="h-4 w-4" />
+                    </button>
+                    <button className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/10 transition-all">
+                      <Ban className="h-4 w-4" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

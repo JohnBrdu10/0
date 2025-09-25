@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Crown, LogOut, Users, Radio, Zap, Globe, Lock, Activity } from 'lucide-react';
+import ChatSystem from './components/ChatSystem';
 import AuthPage from './components/AuthPage';
 import AdminPanel from './components/AdminPanel';
 import StreamPlayer from './components/StreamPlayer';
@@ -25,6 +26,8 @@ function App() {
   const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeUsers, setActiveUsers] = useState(0);
+  const [currentChatContext, setCurrentChatContext] = useState<'global' | string>('global');
+  const [availableStreams, setAvailableStreams] = useState<any[]>([]);
   
   // État du streaming
   const [currentStreamSource, setCurrentStreamSource] = useState<StreamSource | null>(null);
@@ -54,6 +57,13 @@ function App() {
               };
               setChatMessages(prev => [...prev.slice(-49), messageWithDate]);
             }
+            break;
+          case 'available_streams':
+            setAvailableStreams(data.streams || []);
+            break;
+          case 'stream_started':
+            setCurrentStreamSource(data.stream);
+            setCurrentChatContext(data.stream.key);
             break;
           case 'auth_response':
             setIsLoading(false);
@@ -199,6 +209,13 @@ function App() {
 
   const handleStreamSourceChange = (source: StreamSource | null) => {
     setCurrentStreamSource(source);
+  };
+
+  const handleChatContextChange = (context: 'global' | string) => {
+    setCurrentChatContext(context);
+    if (context !== 'global') {
+      // Rejoindre le chat du stream
+    }
   };
 
   // Modal d'accès admin moderne
@@ -348,7 +365,7 @@ function App() {
           <AdminPanel
             currentUser={currentUser}
             connectedUsers={connectedUsers}
-            chatMessages={chatMessages}
+            chatMessages={[]}
             wsService={wsServiceInstance}
             onStreamSourceChange={handleStreamSourceChange}
           />
@@ -356,6 +373,7 @@ function App() {
           /* Page d'accueil moderne avec lecteur de stream */
           <div className="max-w-7xl mx-auto px-6 py-8">
             <div className="mb-8">
+              {/* Hero Section */}
               <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-700/50 rounded-3xl p-8 shadow-2xl">
                 <div className="text-center mb-8">
                   <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-purple-400 to-fuchsia-400 mb-4">
@@ -364,14 +382,6 @@ function App() {
                   <p className="text-xl text-slate-300 font-medium">
                     Plateforme de streaming sécurisée et anonyme nouvelle génération
                   </p>
-                </div>
-                
-                {/* Lecteur de stream moderne */}
-                <div className="mb-8">
-                  <StreamPlayer 
-                    source={currentStreamSource}
-                    onError={(error) => console.error('Stream error:', error)}
-                  />
                 </div>
                 
                 {/* Informations sur le stream actuel */}
@@ -443,6 +453,63 @@ function App() {
                       <div className="text-3xl font-bold text-white mb-2">{stat.value}</div>
                       <div className="text-slate-400 text-sm font-medium">{stat.label}</div>
                     </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Section principale avec stream et chat */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+              {/* Lecteur de stream */}
+              <div className="lg:col-span-2">
+                <StreamPlayer 
+                  source={currentStreamSource}
+                  onError={(error) => console.error('Stream error:', error)}
+                />
+              </div>
+              
+              {/* Chat */}
+              <div className="lg:col-span-1 h-[600px]">
+                <ChatSystem
+                  currentUser={currentUser}
+                  wsService={wsServiceInstance}
+                  currentContext={currentChatContext}
+                  contextName={currentStreamSource?.name}
+                  isAdmin={currentUser?.role === 'admin'}
+                  isModerator={currentUser?.role === 'moderator'}
+                />
+              </div>
+            </div>
+
+            {/* Sélecteur de contexte de chat */}
+            <div className="mb-8">
+              <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6">
+                <h3 className="text-xl font-bold text-white mb-4">Changer de chat</h3>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => handleChatContextChange('global')}
+                    className={`px-4 py-2 rounded-xl font-medium transition-all ${
+                      currentChatContext === 'global'
+                        ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white'
+                        : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50'
+                    }`}
+                  >
+                    <Globe className="h-4 w-4 inline mr-2" />
+                    Chat Global
+                  </button>
+                  {availableStreams.map((stream) => (
+                    <button
+                      key={stream.key}
+                      onClick={() => handleChatContextChange(stream.key)}
+                      className={`px-4 py-2 rounded-xl font-medium transition-all ${
+                        currentChatContext === stream.key
+                          ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                          : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50'
+                      }`}
+                    >
+                      <Radio className="h-4 w-4 inline mr-2" />
+                      {stream.name}
+                    </button>
                   ))}
                 </div>
               </div>

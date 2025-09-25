@@ -157,6 +157,41 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // API pour obtenir les statistiques des streams
+  if (req.url === '/api/stats' && req.method === 'GET') {
+    try {
+      const liveDir = join(mediaDir, 'live');
+      const streams = [];
+      
+      if (fs.existsSync(liveDir)) {
+        const streamDirs = fs.readdirSync(liveDir);
+        streamDirs.forEach(streamKey => {
+          const streamPath = join(liveDir, streamKey);
+          const m3u8Path = join(streamPath, 'index.m3u8');
+          
+          if (fs.existsSync(m3u8Path)) {
+            const stats = fs.statSync(m3u8Path);
+            streams.push({
+              key: streamKey,
+              url: `/live/${streamKey}/index.m3u8`,
+              lastModified: stats.mtime,
+              size: stats.size
+            });
+          }
+        });
+      }
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, streams, count: streams.length }));
+      
+    } catch (error) {
+      console.error('Erreur stats streams:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: 'Erreur serveur' }));
+    }
+    return;
+  }
+
   // API pour lister les streams disponibles
   if (req.url === '/api/streams' && req.method === 'GET') {
     try {
